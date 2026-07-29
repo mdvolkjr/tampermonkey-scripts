@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Frost - Positive Pay Quick Button
 // @namespace    http://tampermonkey.net/
-// @version      1.1
+// @version      1.2
 // @description  Adds a "Positive Pay" button next to the Frost Business Connect logo that jumps straight to the Issue Voids multiple-entry page
 // @author       Michael Volk
 // @match        https://frosttreasuryconnect.com/*
@@ -61,14 +61,25 @@
         if (existing && document.body.contains(existing)) return true;
         if (existing) existing.remove();
 
-        // Preferred: on the logo row, to the right of "Frost BUSINESS CONNECT"
-        const logoWrap = document.querySelector('.powerbar .logo-wrap');
-        if (logoWrap) {
-            logoWrap.style.display = 'flex';
-            logoWrap.style.alignItems = 'center';
+        // Preferred: anchored just right of the "Frost BUSINESS CONNECT" logo.
+        // The logo's wrappers span the full header width, so flow layout pushes
+        // the button to the far right — instead, position it absolutely inside
+        // the logo container, offset by the logo's measured width.
+        const container = document.querySelector('.powerbar [data-qa="logo-container"], .powerbar .logo-container');
+        const logo = container && container.querySelector('a.logo');
+        if (container && logo) {
+            if (getComputedStyle(container).position === 'static') {
+                container.style.position = 'relative';
+            }
+            const logoWidth = logo.getBoundingClientRect().width || 340;
             const btn = makeButton(true);
-            btn.style.marginLeft = '48px';
-            logoWrap.appendChild(btn);
+            btn.style.cssText += `
+                position: absolute;
+                left: ${Math.round(logoWidth + 40)}px;
+                top: 50%;
+                transform: translateY(-50%);
+            `;
+            container.appendChild(btn);
             return true;
         }
 
