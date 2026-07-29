@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Frost - Positive Pay Quick Button
 // @namespace    http://tampermonkey.net/
-// @version      1.0
-// @description  Adds a "Positive Pay" button to the Frost Business Connect top bar that jumps straight to the Issue Voids multiple-entry page
+// @version      1.1
+// @description  Adds a "Positive Pay" button next to the Frost Business Connect logo that jumps straight to the Issue Voids multiple-entry page
 // @author       Michael Volk
 // @match        https://frosttreasuryconnect.com/*
 // @match        https://www.frosttreasuryconnect.com/*
@@ -44,8 +44,8 @@
             // Fallback placement: pinned at the top of the page, clear of the bell/name area
             btn.style.cssText += `
                 position: fixed;
-                top: 8px;
-                right: 380px;
+                top: 60px;
+                right: 420px;
                 z-index: 99999;
                 box-shadow: 0 1px 4px rgba(0,0,0,0.35);
             `;
@@ -56,62 +56,23 @@
         return btn;
     }
 
-    function isDark(el) {
-        const bg = getComputedStyle(el).backgroundColor;
-        const m = bg && bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
-        if (!m) return false;
-        if (m[4] !== undefined && parseFloat(m[4]) === 0) return false; // transparent
-        const [r, g, b] = [+m[1], +m[2], +m[3]];
-        return (0.299 * r + 0.587 * g + 0.114 * b) < 80; // perceived luminance
-    }
-
-    // Find the black title bar (the one showing "Home" / current page name) by
-    // locating a heading near the top of the page whose ancestor has a dark
-    // background. Class names are generated, so we go by looks, not selectors.
-    function findDarkTitleBar() {
-        const headings = document.querySelectorAll('h1, h2, h3, [class*="title" i], [class*="header" i] span');
-        for (const h of headings) {
-            const rect = h.getBoundingClientRect();
-            if (rect.top < 0 || rect.top > 400 || rect.height === 0) continue;
-            let node = h;
-            for (let depth = 0; node && depth < 6; depth++) {
-                if (isDark(node)) {
-                    const r = node.getBoundingClientRect();
-                    // Wide, shortish, horizontal bar
-                    if (r.width > window.innerWidth * 0.5 && r.height < 120) return node;
-                }
-                node = node.parentElement;
-            }
-        }
-        return null;
-    }
-
     function inject() {
         const existing = document.getElementById(BUTTON_ID);
         if (existing && document.body.contains(existing)) return true;
         if (existing) existing.remove();
 
-        // Preferred: inline on the dark Home bar, before the right-side controls
-        const bar = findDarkTitleBar();
-        if (bar) {
+        // Preferred: on the logo row, to the right of "Frost BUSINESS CONNECT"
+        const logoWrap = document.querySelector('.powerbar .logo-wrap');
+        if (logoWrap) {
+            logoWrap.style.display = 'flex';
+            logoWrap.style.alignItems = 'center';
             const btn = makeButton(true);
-            btn.style.alignSelf = 'center';
-            const style = getComputedStyle(bar);
-            if (style.display.includes('flex')) {
-                btn.style.marginLeft = 'auto';
-                // Keep the "Add Widget" dropdown (if present) as the right-most item
-                const lastChild = bar.lastElementChild;
-                if (lastChild) bar.insertBefore(btn, lastChild);
-                else bar.appendChild(btn);
-            } else {
-                btn.style.cssText += 'position: absolute; right: 200px; top: 50%; transform: translateY(-50%);';
-                if (getComputedStyle(bar).position === 'static') bar.style.position = 'relative';
-                bar.appendChild(btn);
-            }
+            btn.style.marginLeft = '48px';
+            logoWrap.appendChild(btn);
             return true;
         }
 
-        // Fallback: fixed button at the top of the viewport
+        // Fallback: fixed button at logo-row height so it never disappears
         if (document.body) {
             document.body.appendChild(makeButton(false));
             return true;
