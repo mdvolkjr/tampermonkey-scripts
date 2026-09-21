@@ -7,6 +7,7 @@ Userscripts for QuickBooks Online and Clio workflows.
 | [QBO - Print Checks Screen - Account Quick Select](QBO%20-%20Print%20Checks%20Screen%20-%20Account%20Quick%20Select.user.js) | Adds one-click account buttons to the QBO Print Checks header to switch the Account dropdown. |
 | [QBO - Display Ending Check Number](QBO%20-%20Display%20Ending%20Check%20Number.user.js) | Shows the ending check number next to the Starting check number field on the QBO Print Checks page. |
 | [Clio – Quick Pay (Check)](clio-quick-pay.user.js) | Floating toolbar on Clio Receive Payments that fills payment source, deposit account, and amount, then records the payment. |
+| [Gmail - Preview Attachment Before Sending](gmail-attachment-preview.user.js) | Click an attachment in a Gmail compose window to read it in an overlay instead of downloading it, so you can confirm the right document is attached before you hit Send. |
 
 ## Installing
 
