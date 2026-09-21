@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gmail - Preview Attachment Before Sending
 // @namespace    vmllp
-// @version      1.0
+// @version      1.1
 // @description  Click an attachment in a Gmail compose window to view it in an overlay instead of downloading it. Captures the file as you attach it, so it never depends on Gmail's internal attachment URLs.
 // @author       Michael Volk
 // @match        https://mail.google.com/*
@@ -197,107 +197,147 @@
     return (bytes / 1024 / 1024).toFixed(1) + ' MB';
   }
 
-  function injectStyles() {
-    if (document.getElementById('vm-attach-preview-css')) return;
-    const style = document.createElement('style');
-    style.id = 'vm-attach-preview-css';
-    style.textContent = [
-      '#vm-attach-preview{position:fixed;inset:0;z-index:2147483647;background:rgba(15,17,20,.82);',
-      'display:flex;align-items:center;justify-content:center;font-family:Roboto,Arial,sans-serif}',
-      '#vm-attach-preview .vm-shell{width:min(1100px,94vw);height:92vh;background:#fff;border-radius:10px;',
-      'display:flex;flex-direction:column;overflow:hidden;box-shadow:0 18px 60px rgba(0,0,0,.5)}',
-      '#vm-attach-preview .vm-bar{display:flex;align-items:center;gap:10px;padding:10px 14px;background:#f1f3f4;',
-      'border-bottom:1px solid #dadce0;flex:0 0 auto}',
-      '#vm-attach-preview .vm-name{font-size:14px;font-weight:600;color:#202124;white-space:nowrap;overflow:hidden;',
-      'text-overflow:ellipsis;flex:1 1 auto}',
-      '#vm-attach-preview .vm-meta{font-size:12px;color:#5f6368;flex:0 0 auto}',
-      '#vm-attach-preview button{font:inherit;font-size:13px;border:1px solid #dadce0;background:#fff;color:#202124;',
-      'border-radius:4px;padding:6px 12px;cursor:pointer;flex:0 0 auto}',
-      '#vm-attach-preview button:hover{background:#e8eaed}',
-      '#vm-attach-preview .vm-close{border:none;background:transparent;font-size:20px;line-height:1;padding:4px 8px}',
-      '#vm-attach-preview .vm-body{flex:1 1 auto;overflow:auto;background:#525659;display:flex;',
-      'align-items:center;justify-content:center}',
-      '#vm-attach-preview iframe{width:100%;height:100%;border:0;background:#fff}',
-      '#vm-attach-preview img{max-width:100%;max-height:100%;object-fit:contain}',
-      '#vm-attach-preview pre{margin:0;padding:20px;width:100%;overflow:auto;background:#fff;',
-      'color:#202124;font:13px/1.5 Consolas,monospace;white-space:pre-wrap;word-break:break-word;align-self:stretch}',
-      '#vm-attach-preview .vm-note{color:#e8eaed;font-size:14px;text-align:center;padding:40px;line-height:1.6}'
-    ].join('');
-    document.head.appendChild(style);
+  // Every style is set inline. Gmail's Content-Security-Policy can refuse an
+  // injected <style>, and an unstyled overlay is an invisible one.
+  function css(el, text) { el.style.cssText = text; return el; }
+
+  function make(tag, style, text) {
+    const el = document.createElement(tag);
+    if (style) css(el, style);
+    if (text) el.textContent = text;
+    return el;
+  }
+
+  function button(label) {
+    const b = make('button', 'font:500 13px Roboto,Arial,sans-serif;border:1px solid #dadce0;' +
+      'background:#fff;color:#202124;border-radius:4px;padding:6px 12px;cursor:pointer;flex:0 0 auto;', label);
+    b.addEventListener('mouseenter', () => { b.style.background = '#e8eaed'; });
+    b.addEventListener('mouseleave', () => { b.style.background = '#fff'; });
+    return b;
+  }
+
+  function closeViewer() {
+    document.removeEventListener('keydown', onKey, true);
+    if (overlay) {
+      // A dialog opened with showModal() has to be closed, not just detached,
+      // or the page stays inert.
+      try { if (overlay.close && overlay.open) overlay.close(); } catch (err) { /* not a dialog */ }
+      overlay.remove();
+      overlay = null;
+    }
+    if (liveURL) { URL.revokeObjectURL(liveURL); liveURL = null; }
   }
 
   function onKey(e) {
     if (e.key === 'Escape') { e.stopPropagation(); closeViewer(); }
   }
 
-  function closeViewer() {
-    if (overlay) { overlay.remove(); overlay = null; }
-    if (liveURL) { URL.revokeObjectURL(liveURL); liveURL = null; }
-    document.removeEventListener('keydown', onKey, true);
-  }
-
   function openViewer(file) {
-    injectStyles();
     closeViewer();
 
     liveURL = URL.createObjectURL(file);
     const ext = extOf(file.name);
 
-    overlay = document.createElement('div');
+    // Gmail's compose window is a modal dialog living in the browser's top
+    // layer, and nothing in the ordinary page can paint above that however
+    // high its z-index. Going into the top layer ourselves is the only way to
+    // land on top of it. Falling back to a plain fixed div if that is refused.
+    overlay = make('dialog',
+      'position:fixed;top:0;left:0;margin:0;padding:0;border:0;outline:0;background:transparent;' +
+      'width:100vw;max-width:100vw;height:100vh;max-height:100vh;overflow:hidden;z-index:2147483647;');
     overlay.id = 'vm-attach-preview';
-    overlay.innerHTML =
-      '<div class="vm-shell">' +
-        '<div class="vm-bar">' +
-          '<span class="vm-name"></span>' +
-          '<span class="vm-meta"></span>' +
-          '<button class="vm-tab">Open in new tab</button>' +
-          '<button class="vm-dl">Download</button>' +
-          '<button class="vm-close" title="Close (Esc)">&times;</button>' +
-        '</div>' +
-        '<div class="vm-body"></div>' +
-      '</div>';
 
-    overlay.querySelector('.vm-name').textContent = file.name;
-    overlay.querySelector('.vm-meta').textContent = humanSize(file.size);
+    const backdrop = make('div',
+      'width:100%;height:100%;background:rgba(15,17,20,.82);display:flex;' +
+      'align-items:center;justify-content:center;font-family:Roboto,Arial,sans-serif;');
 
-    const body = overlay.querySelector('.vm-body');
+    const shell = make('div',
+      'width:min(1100px,94vw);height:92vh;background:#fff;border-radius:10px;display:flex;' +
+      'flex-direction:column;overflow:hidden;box-shadow:0 18px 60px rgba(0,0,0,.5);');
 
-    if (ext === 'pdf' || file.type === 'application/pdf') {
-      const frame = document.createElement('iframe');
-      frame.src = liveURL;
-      body.appendChild(frame);
-    } else if (IMAGE_EXT.indexOf(ext) !== -1) {
-      const img = document.createElement('img');
-      img.src = liveURL;
-      body.appendChild(img);
-    } else if (TEXT_EXT.indexOf(ext) !== -1) {
-      const pre = document.createElement('pre');
-      pre.textContent = 'Loading…';
-      body.appendChild(pre);
-      file.text().then((t) => { pre.textContent = t; });
-    } else {
-      const note = document.createElement('div');
-      note.className = 'vm-note';
-      note.textContent = (ext ? ext.toUpperCase() + ' files' : 'This file type') +
-        ' cannot be shown inline. Use Open in new tab or Download to check it.';
-      body.appendChild(note);
-    }
+    const bar = make('div',
+      'display:flex;align-items:center;gap:10px;padding:10px 14px;background:#f1f3f4;' +
+      'border-bottom:1px solid #dadce0;flex:0 0 auto;');
 
-    overlay.querySelector('.vm-close').addEventListener('click', closeViewer);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeViewer(); });
+    bar.appendChild(make('span',
+      'font:600 14px Roboto,Arial,sans-serif;color:#202124;white-space:nowrap;overflow:hidden;' +
+      'text-overflow:ellipsis;flex:1 1 auto;', file.name));
+    bar.appendChild(make('span',
+      'font:12px Roboto,Arial,sans-serif;color:#5f6368;flex:0 0 auto;', humanSize(file.size)));
 
-    overlay.querySelector('.vm-tab').addEventListener('click', () => {
-      window.open(liveURL, '_blank', 'noopener');
-    });
+    const tabBtn = button('Open in new tab');
+    tabBtn.addEventListener('click', () => { window.open(liveURL, '_blank', 'noopener'); });
+    bar.appendChild(tabBtn);
 
-    overlay.querySelector('.vm-dl').addEventListener('click', () => {
+    const dlBtn = button('Download');
+    dlBtn.addEventListener('click', () => {
       const a = document.createElement('a');
       a.href = liveURL;
       a.download = file.name;
       a.click();
     });
+    bar.appendChild(dlBtn);
+
+    const closeBtn = make('button',
+      'font:20px/1 Roboto,Arial,sans-serif;border:0;background:transparent;color:#202124;' +
+      'cursor:pointer;padding:4px 10px;flex:0 0 auto;', '×');
+    closeBtn.title = 'Close (Esc)';
+    closeBtn.addEventListener('click', closeViewer);
+    bar.appendChild(closeBtn);
+
+    const body = make('div',
+      'flex:1 1 auto;overflow:auto;background:#525659;display:flex;align-items:center;justify-content:center;');
+
+    if (ext === 'pdf' || file.type === 'application/pdf') {
+      const frame = make('iframe', 'width:100%;height:100%;border:0;background:#fff;');
+      frame.src = liveURL;
+      body.appendChild(frame);
+    } else if (IMAGE_EXT.indexOf(ext) !== -1) {
+      const img = make('img', 'max-width:100%;max-height:100%;object-fit:contain;');
+      img.src = liveURL;
+      body.appendChild(img);
+    } else if (TEXT_EXT.indexOf(ext) !== -1) {
+      const pre = make('pre',
+        'margin:0;padding:20px;width:100%;align-self:stretch;overflow:auto;background:#fff;color:#202124;' +
+        'font:13px/1.5 Consolas,monospace;white-space:pre-wrap;word-break:break-word;', 'Loading…');
+      body.appendChild(pre);
+      file.text().then((t) => { pre.textContent = t; });
+    } else {
+      body.appendChild(make('div',
+        'color:#e8eaed;font:14px/1.6 Roboto,Arial,sans-serif;text-align:center;padding:40px;',
+        (ext ? ext.toUpperCase() + ' files' : 'This file type') +
+        ' cannot be shown inline. Use Open in new tab or Download to check it.'));
+    }
+
+    shell.appendChild(bar);
+    shell.appendChild(body);
+    backdrop.appendChild(shell);
+    overlay.appendChild(backdrop);
+
+    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeViewer(); });
 
     document.body.appendChild(overlay);
+
+    if (typeof overlay.showModal === 'function') {
+      try {
+        overlay.showModal();
+        overlay.addEventListener('cancel', (e) => { e.preventDefault(); closeViewer(); });
+      } catch (err) {
+        openAsPlainOverlay();
+      }
+    } else {
+      openAsPlainOverlay();
+    }
+
     document.addEventListener('keydown', onKey, true);
+
+    function openAsPlainOverlay() {
+      const plain = make('div', overlay.style.cssText + 'display:block;');
+      plain.id = 'vm-attach-preview';
+      plain.appendChild(backdrop);
+      overlay.remove();
+      overlay = plain;
+      document.body.appendChild(overlay);
+    }
   }
 })();
