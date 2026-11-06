@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Clio - Generate Bill Button
 // @namespace    vmllp
-// @version      1.1
+// @version      1.2
 // @description  On the Quick Bill page: clicks Show Options, checks Skip the bill approval process, then clicks Generate Bill. One button does it all.
 // @author       Michael Volk
 // @match        https://app.clio.com/*
@@ -9,10 +9,15 @@
 // @downloadURL  https://raw.githubusercontent.com/mdvolkjr/tampermonkey-scripts/main/clio-generate-bill.user.js
 // @grant        none
 // @run-at       document-idle
+// @noframes
 // ==/UserScript==
 
 (function () {
   'use strict';
+
+  // Run only in the top window — the Quick Bill form lives in a same-origin
+  // iframe, and without this guard the script injects a second button there.
+  if (window.top !== window.self) return;
 
   const TOOLBAR_ID = 'tm-quickbill-toolbar';
 
