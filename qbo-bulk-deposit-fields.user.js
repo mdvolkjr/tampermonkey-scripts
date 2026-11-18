@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         QBO Bulk Deposit Fields
 // @namespace    qbo-bulk-deposit-fields
-// @version      2.10
+// @version      2.11
 // @description  Bulk-set Payment Method and Account on the QBO Bank Deposit page; acts on checked rows only (all rows when none are checked)
 // @match        https://app.qbo.intuit.com/*
 // @match        https://qbo.intuit.com/*
@@ -187,7 +187,7 @@ async function runPaymentMethod(value) {
         if (!input) throw new Error('editor did not open');
         await setComboValue(input, value);
         updated++;
-        await sleep(250);
+        await sleep(120);
       } catch(e) {
         console.warn('[QBO] payment method row failed:', e.message);
         tr.dataset.tmPmFailed = '1';
@@ -197,7 +197,7 @@ async function runPaymentMethod(value) {
     status.textContent = 'Updated ' + updated + ' of ' + total + ' rows' +
       (alreadySet > 0 ? ' (' + alreadySet + ' already set).' : '.');
     if (updated === 0 && total > 0) status.style.background = '#d52b1e';
-    setTimeout(function() { status.remove(); }, 3500);
+    setTimeout(function() { status.remove(); }, 2000);
   } catch(e) {
     status.textContent = 'Error: ' + e.message;
     status.style.background = '#d52b1e';
@@ -227,20 +227,28 @@ async function runDirect(value) {
     }
 
     var updated = 0;
+    var alreadySet = 0;
     for (var i = 0; i < inputs.length; i++) {
       status.textContent = 'Account ' + (i+1) + ' of ' + total + '...';
       try {
+        // Already on the target account (display name contains our value) — skip.
+        if (inputs[i].value.trim().toLowerCase().indexOf(value.trim().toLowerCase()) !== -1) {
+          alreadySet++;
+          continue;
+        }
         await setComboValue(inputs[i], value);
         updated++;
-        await sleep(300);
+        await sleep(120);
       } catch(e) {
         console.warn('[QBO] account row', i, 'failed:', e.message);
       }
     }
 
-    status.textContent = 'Updated ' + updated + ' of ' + total + ' accounts.';
-    if (updated === 0) status.style.background = '#d52b1e';
-    setTimeout(function() { status.remove(); }, 3500);
+    status.textContent = alreadySet === total
+      ? 'Already set to ' + value + '.'
+      : 'Updated ' + updated + ' of ' + total + ' accounts.';
+    if (updated === 0 && alreadySet === 0) status.style.background = '#d52b1e';
+    setTimeout(function() { status.remove(); }, 1500);
   } catch(e) {
     status.textContent = 'Error: ' + e.message;
     status.style.background = '#d52b1e';
@@ -463,15 +471,15 @@ async function setComboValue(input, value) {
   input.dispatchEvent(new MouseEvent('mouseup',   { bubbles:true, cancelable:true }));
   input.dispatchEvent(new MouseEvent('click',     { bubbles:true, cancelable:true }));
   input.focus();
-  await sleep(150);
+  await sleep(50);
 
   var nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
   nativeSetter.call(input, value);
   input.dispatchEvent(new Event('input',  { bubbles:true }));
   input.dispatchEvent(new Event('change', { bubbles:true }));
 
-  var opt = await waitForOption(input, value, 800);
-  if (opt) { opt.click(); await sleep(80); return; }
+  var opt = await waitForOption(input, value, 1200);
+  if (opt) { opt.click(); await sleep(40); return; }
 
   nativeSetter.call(input, '');
   input.dispatchEvent(new Event('input', { bubbles:true }));
@@ -486,7 +494,7 @@ async function waitForOption(input, value, timeout) {
   while (Date.now() < deadline) {
     var opt = findOptionForInput(input, value) || findOptionGlobal(value);
     if (opt) return opt;
-    await sleep(80);
+    await sleep(40);
   }
   return null;
 }
