@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Close Claude Tab Groups",
+  "version": "1.0.0",
+  "description": "Deletes all Chrome tab groups created by Claude (any group whose name contains \"Claude\"), except the group holding your active tab.",
+  "permissions": ["tabs", "tabGroups"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Close Claude tab groups" },
+  "commands": {
+    "close-claude-groups": {
+      "suggested_key": { "default": "Alt+Shift+C" },
+      "description": "Close all Claude tab groups"
+    }
+  }
+}
