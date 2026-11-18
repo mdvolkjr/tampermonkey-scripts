@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Clio – Quick Pay (Check)
 // @namespace    vmllp
-// @version      2.1
-// @description  Floating toolbar on Receive Payments: two paths (Operating / Expense), each sets Payment Source=Direct-Check, Deposit Account, Amount, then clicks Record Payment
+// @version      2.2
+// @description  Floating toolbar on Receive Payments: balance buttons (Operating/Expense, Clio autofills amount) plus custom-amount rows; sets Payment Source=Direct-Check, Deposit Account, then clicks Record Payment
 // @author       Michael Volk
 // @match        https://app.clio.com/nc/#/bills/receive_payments*
 // @updateURL    https://raw.githubusercontent.com/mdvolkjr/tampermonkey-scripts/main/clio-quick-pay.user.js
@@ -91,8 +91,13 @@
 
   // ── Core flow ─────────────────────────────────────────────────────────────
 
+  /**
+   * Run the payment flow. If `amountValue` is null, the amount step is skipped
+   * so Clio's own autofill (the outstanding balance) is kept.
+   */
   async function runPayment(depositAccount, amountValue, btn) {
-    if (!amountValue || isNaN(parseFloat(amountValue))) {
+    const useBalance = amountValue === null;
+    if (!useBalance && (!amountValue || isNaN(parseFloat(amountValue)))) {
       alert('Quick Pay: enter an amount first.');
       return;
     }
@@ -105,7 +110,7 @@
       const srcOk = await selectKendoOption('Select payment source', SOURCE_TEXT);
       if (!srcOk) {
         alert(`Quick Pay: could not select "${SOURCE_TEXT}" as Payment Source.\nIs a client already selected?`);
-        resetBtn(btn, depositAccount);
+        resetBtn(btn);
         return;
       }
       await sleep(300);
@@ -114,26 +119,28 @@
       const destOk = await selectKendoOption('Select deposit account', depositAccount);
       if (!destOk) {
         alert(`Quick Pay: could not select "${depositAccount}" as Deposit Account.`);
-        resetBtn(btn, depositAccount);
+        resetBtn(btn);
         return;
       }
       await sleep(300);
 
-      // 3. Set Amount
-      const amtOk = setAngularInput('totalAmount', amountValue);
-      if (!amtOk) {
-        alert('Quick Pay: could not find the Payment Amount field.');
-        resetBtn(btn, depositAccount);
-        return;
+      // 3. Set Amount (skipped in balance mode — Clio autofills the balance)
+      if (!useBalance) {
+        const amtOk = setAngularInput('totalAmount', amountValue);
+        if (!amtOk) {
+          alert('Quick Pay: could not find the Payment Amount field.');
+          resetBtn(btn);
+          return;
+        }
+        await sleep(200);
       }
-      await sleep(200);
 
       // 4. Click Record Payment
       const recordBtn = Array.from(document.querySelectorAll('button'))
         .find(b => b.textContent.trim() === 'Record payment' && b.type === 'submit');
       if (!recordBtn) {
         alert('Quick Pay: could not find the "Record payment" button.');
-        resetBtn(btn, depositAccount);
+        resetBtn(btn);
         return;
       }
       recordBtn.click();
@@ -141,20 +148,18 @@
       // Flash success
       btn.textContent = '✓ Done!';
       btn.style.background = '#28a745';
-      setTimeout(() => resetBtn(btn, depositAccount), 2000);
+      setTimeout(() => resetBtn(btn), 2000);
 
     } catch (e) {
       alert('Quick Pay error: ' + e.message);
-      resetBtn(btn, depositAccount);
+      resetBtn(btn);
     }
   }
 
-  function resetBtn(btn, depositAccount) {
+  function resetBtn(btn) {
     btn.disabled = false;
-    btn.style.background = depositAccount === ACCT_OPERATING ? '#0070d2' : '#6f42c1';
-    btn.textContent = depositAccount === ACCT_OPERATING
-      ? '💼 Operating'
-      : '🧾 Expense';
+    btn.style.background = btn.dataset.tmColor;
+    btn.textContent = btn.dataset.tmLabel;
   }
 
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -253,6 +258,8 @@
       });
       goBtn.addEventListener('mouseenter', () => goBtn.style.filter = 'brightness(1.2)');
       goBtn.addEventListener('mouseleave', () => goBtn.style.filter = '');
+      goBtn.dataset.tmLabel = goBtn.textContent;
+      goBtn.dataset.tmColor = color;
 
       const acct = label.includes('Operating') ? ACCT_OPERATING : ACCT_EXPENSE;
       goBtn.addEventListener('click', () => runPayment(acct, amtInp.value, goBtn));
@@ -265,8 +272,58 @@
       return { row, amtInp };
     }
 
-    const divider = document.createElement('hr');
-    Object.assign(divider.style, { border: 'none', borderTop: '1px solid #333', margin: '0' });
+    // helper: balance button (no amount — Clio autofills the outstanding balance)
+    function makeBalanceBtn(label, color, acct) {
+      const b = document.createElement('button');
+      b.textContent = label;
+      Object.assign(b.style, {
+        flex:         '1',
+        padding:      '8px 10px',
+        background:   color,
+        color:        '#fff',
+        border:       'none',
+        borderRadius: '8px',
+        fontWeight:   '700',
+        cursor:       'pointer',
+        whiteSpace:   'nowrap',
+        fontSize:     '12px',
+      });
+      b.addEventListener('mouseenter', () => b.style.filter = 'brightness(1.2)');
+      b.addEventListener('mouseleave', () => b.style.filter = '');
+      b.dataset.tmLabel = label;
+      b.dataset.tmColor = color;
+      b.addEventListener('click', () => runPayment(acct, null, b));
+      return b;
+    }
+
+    // ── Balance section (pay full balance, Clio autofills amount) ──
+    const balLbl = document.createElement('div');
+    balLbl.textContent = 'PAY FULL BALANCE';
+    Object.assign(balLbl.style, { color: '#aaa', fontSize: '11px', fontWeight: '600', letterSpacing: '0.04em' });
+
+    const balRow = document.createElement('div');
+    Object.assign(balRow.style, { display: 'flex', gap: '6px' });
+    balRow.appendChild(makeBalanceBtn('💼 Operating Balance', '#0070d2', ACCT_OPERATING));
+    balRow.appendChild(makeBalanceBtn('🧾 Expense Balance',   '#6f42c1', ACCT_EXPENSE));
+
+    // ── Demarcation between balance and custom-amount sections ──
+    function makeDivider(text) {
+      const d = document.createElement('div');
+      Object.assign(d.style, { display: 'flex', alignItems: 'center', gap: '8px', margin: '2px 0' });
+      const line1 = document.createElement('hr');
+      const line2 = document.createElement('hr');
+      [line1, line2].forEach(l => Object.assign(l.style, { flex: '1', border: 'none', borderTop: '1px solid #333', margin: '0' }));
+      const t = document.createElement('span');
+      t.textContent = text;
+      Object.assign(t.style, { color: '#666', fontSize: '10px', fontWeight: '600', letterSpacing: '0.05em' });
+      d.appendChild(line1);
+      if (text) d.appendChild(t);
+      d.appendChild(line2);
+      return d;
+    }
+
+    const divider = makeDivider('CUSTOM AMOUNT');
+    const innerDivider = makeDivider('');
 
     const { row: opRow, amtInp: opAmt } = makeAmountRow('Operating Account', '#0070d2');
     const { row: expRow, amtInp: expAmt } = makeAmountRow('Expense Account',  '#6f42c1');
@@ -278,8 +335,11 @@
     srcNote.textContent = '✔ Source auto-set to: Direct - Check';
     Object.assign(srcNote.style, { color: '#888', fontSize: '10px', textAlign: 'center', marginTop: '2px' });
 
-    panel.appendChild(opRow);
+    panel.appendChild(balLbl);
+    panel.appendChild(balRow);
     panel.appendChild(divider);
+    panel.appendChild(opRow);
+    panel.appendChild(innerDivider);
     panel.appendChild(expRow);
     panel.appendChild(srcNote);
 
