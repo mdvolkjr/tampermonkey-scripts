@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         QBO Bulk Deposit Fields
 // @namespace    qbo-bulk-deposit-fields
-// @version      2.9
+// @version      2.10
 // @description  Bulk-set Payment Method and Account on the QBO Bank Deposit page; acts on checked rows only (all rows when none are checked)
 // @match        https://app.qbo.intuit.com/*
 // @match        https://qbo.intuit.com/*
@@ -111,9 +111,10 @@ function anyRowsSelected() {
 
 function rowIsSelected(el) {
   var tr = el.closest('tr');
-  if (!tr) return false;
+  if (!tr) return true; // page-level field (e.g. the deposit-to account) — always in scope
   var cb = tr.querySelector('input[type="checkbox"]');
-  return !!(cb && cb.checked);
+  if (!cb) return true; // row without a checkbox (Add funds table) — always in scope
+  return cb.checked;
 }
 
 // Returns a filter function frozen to the selection state at run start.
@@ -132,54 +133,70 @@ function runBulkSet(mode, value) {
   }
 }
 
-// On some QBO page states the payment method inputs are already in the DOM;
-// on others they are lazy and only appear after clicking the cell.
-// Try direct first; fall back to cell-click if nothing is found.
-async function runPaymentMethod(value) {
-  var inScope = makeScopeFilter();
-  var directInputs = Array.from(document.querySelectorAll('input[data-testid*="payment_method"]')).filter(inScope);
-  if (directInputs.length > 0) {
-    console.log('[QBO] payment method inputs already in DOM, using direct mode');
-    await runDirectPM(directInputs, value, inScope);
-  } else {
-    console.log('[QBO] payment method inputs not in DOM, using cell-click mode');
-    await runViaCell(value, inScope);
-  }
+// Payment method cells hold a read-only button (data-testid="read-only-payment-name")
+// that turns into a combobox input when clicked. Work row by row, re-querying the DOM
+// before each row because React re-renders the table after every update, which
+// detaches previously collected nodes (this is what used to make rows get skipped).
+function pmRowNeedsWork(tr, value) {
+  if (tr.dataset.tmPmFailed) return false;
+  var v = value.trim().toLowerCase();
+  var input = tr.querySelector('input[data-testid*="payment_method"]');
+  if (input) return input.value.trim().toLowerCase() !== v;
+  var btn = tr.querySelector('button[data-testid="read-only-payment-name"]');
+  if (btn) return btn.textContent.trim().toLowerCase() !== v;
+  return false;
 }
 
-async function runDirectPM(inputs, value, inScope) {
+function queryPMRows(inScope) {
+  return Array.from(document.querySelectorAll('tbody tr')).filter(function(tr) {
+    return tr.querySelector('button[data-testid="read-only-payment-name"], input[data-testid*="payment_method"]') && inScope(tr);
+  });
+}
+
+async function runPaymentMethod(value) {
+  var inScope = makeScopeFilter();
+  var initialRows = queryPMRows(inScope);
+  if (initialRows.length === 0) {
+    console.log('[QBO] no payment method rows found, falling back to cell-click mode');
+    await runViaCell(value, inScope);
+    return;
+  }
+
   var status = makeStatus('Setting payment methods to "' + value + '"...');
   try {
-    var total = inputs.length;
+    var total = initialRows.filter(function(tr) { return pmRowNeedsWork(tr, value); }).length;
+    var alreadySet = initialRows.length - total;
     var updated = 0;
-    var MAX = 20;
-    var failed = new Set();
+    var MAX = 50;
 
-    while (updated < MAX) {
-      var currentInputs = Array.from(document.querySelectorAll('input[data-testid*="payment_method"]')).filter(inScope);
-      var v = value.trim().toLowerCase();
-      var input = null;
-      for (var j = 0; j < currentInputs.length; j++) {
-        var key = currentInputs[j].dataset.testid || currentInputs[j].id || currentInputs[j].name;
-        if (currentInputs[j].value.trim().toLowerCase() !== v && !failed.has(key)) {
-          input = currentInputs[j]; break;
-        }
-      }
-      if (!input) break;
-
-      var ikey = input.dataset.testid || input.id || input.name;
+    for (var n = 0; n < MAX; n++) {
+      // Re-query every iteration — React may have replaced the rows.
+      var tr = queryPMRows(inScope).find(function(r) { return pmRowNeedsWork(r, value); });
+      if (!tr) break;
+      status.textContent = 'Row ' + (updated + 1) + ' of ' + total + '...';
       try {
+        var input = tr.querySelector('input[data-testid*="payment_method"]');
+        if (!input) {
+          tr.querySelector('button[data-testid="read-only-payment-name"]').click();
+          var deadline = Date.now() + 1500;
+          while (Date.now() < deadline && !input) {
+            await sleep(50);
+            input = tr.querySelector('input[data-testid*="payment_method"]');
+          }
+        }
+        if (!input) throw new Error('editor did not open');
         await setComboValue(input, value);
         updated++;
         await sleep(250);
       } catch(e) {
-        console.warn('[QBO] direct PM failed on', input, e);
-        failed.add(ikey);
+        console.warn('[QBO] payment method row failed:', e.message);
+        tr.dataset.tmPmFailed = '1';
       }
     }
 
-    status.textContent = 'Updated ' + updated + ' of ' + total + ' rows.';
-    if (updated === 0) status.style.background = '#d52b1e';
+    status.textContent = 'Updated ' + updated + ' of ' + total + ' rows' +
+      (alreadySet > 0 ? ' (' + alreadySet + ' already set).' : '.');
+    if (updated === 0 && total > 0) status.style.background = '#d52b1e';
     setTimeout(function() { status.remove(); }, 3500);
   } catch(e) {
     status.textContent = 'Error: ' + e.message;
@@ -195,7 +212,10 @@ async function runDirect(value) {
     var inScope = makeScopeFilter();
     var inputs = Array.from(document.querySelectorAll(
       'input[data-testid*="payment_account"], input[aria-label="Choose an account"]'
-    )).filter(inScope);
+    )).filter(function(inp) {
+      // The cashback account field also matches — leave it alone.
+      return (inp.dataset.testid || '').indexOf('cashback') === -1;
+    }).filter(inScope);
     var total = inputs.length;
     console.log('[QBO] account inputs found:', total);
 
